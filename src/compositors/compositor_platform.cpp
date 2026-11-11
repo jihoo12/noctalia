@@ -149,6 +149,23 @@ namespace {
     return terminateLabwcPid();
   }
 
+  // Shady is not a CompositorKind of its own; its session sets XDG_CURRENT_DESKTOP=shady
+  // (SHADY_SOCKET alone proves nothing: it can linger in the systemd user environment).
+  // Asking shady to quit lets shady-session end normally, so the display manager takes
+  // the seat back. loginctl terminate-session would SIGTERM the display manager's own
+  // session helper too, and SDDM then leaves a blank VT.
+  [[nodiscard]] bool requestShadySessionExit() {
+    if (!StringUtils::containsInsensitive(compositors::envHint(), "shady") || !process::commandExists("shadyctl")) {
+      return false;
+    }
+    const process::RunResult result = process::runSync({"shadyctl", "quit"});
+    if (!result) {
+      kLog.warn("logout: shadyctl quit failed with code {}", result.exitCode);
+      return false;
+    }
+    return true;
+  }
+
   [[nodiscard]] bool requestLoginSessionExit() {
     if (const char* sessionId = std::getenv("XDG_SESSION_ID"); sessionId != nullptr
         && sessionId[0] != '\0'
@@ -1802,7 +1819,11 @@ bool CompositorPlatform::requestSessionExit() const {
     }
     break;
   case compositors::CompositorKind::Kde:
+    break;
   case compositors::CompositorKind::Unknown:
+    if (requestShadySessionExit()) {
+      return true;
+    }
     break;
   }
 
